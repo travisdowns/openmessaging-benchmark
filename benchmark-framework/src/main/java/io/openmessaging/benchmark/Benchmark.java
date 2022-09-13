@@ -136,7 +136,6 @@ public class Benchmark {
             worker = new LocalWorker();
         }
 
-        boolean exceptionalRun = true;
         try {
             workloads.forEach((workloadName, workload) -> {
                 arguments.drivers.forEach(driverConfig -> {
@@ -179,17 +178,8 @@ public class Benchmark {
                     }
                 });
             });
-
-            exceptionalRun = false;
         } finally {
-            try {
-                worker.close();
-            } catch (Exception e) {
-                // don't override the original exception if one was thrown
-                if (!exceptionalRun) {
-                    throw e;
-                }
-            }
+            worker.close();
         }
 
 
