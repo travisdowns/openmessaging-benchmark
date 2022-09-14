@@ -21,6 +21,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -136,6 +137,8 @@ public class Benchmark {
             worker = new LocalWorker();
         }
 
+        AtomicBoolean anyFailed = new AtomicBoolean();
+
         try {
             workloads.forEach((workloadName, workload) -> {
                 arguments.drivers.forEach(driverConfig -> {
@@ -169,6 +172,7 @@ public class Benchmark {
 
                         generator.close();
                     } catch (Exception e) {
+                        anyFailed.set(true);
                         log.error("Failed to run the workload '{}' for driver '{}'", workload.name, driverConfig, e);
                     } finally {
                         try {
@@ -182,6 +186,13 @@ public class Benchmark {
             worker.close();
         }
 
+        // We catch and eat exceptions thrown by benchmark runs above, but we would like the process
+        // to return a non-zero exit code on failure, for the benefit of the caller.
+        if (anyFailed.get()) {
+            System.exit(1);
+        } else {
+            System.exit(0);
+        }
 
     }
 
