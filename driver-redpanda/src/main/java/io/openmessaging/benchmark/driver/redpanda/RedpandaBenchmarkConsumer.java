@@ -52,6 +52,7 @@ public class RedpandaBenchmarkConsumer implements BenchmarkConsumer {
         this.executor = Executors.newSingleThreadExecutor();
 
         this.consumerTask = this.executor.submit(() -> {
+            long lastOffsetNanos = -1;
             while (!closing) {
                 try {
                     ConsumerRecords<String, byte[]> records = consumer.poll(Duration.ofMillis(100));
@@ -63,6 +64,9 @@ public class RedpandaBenchmarkConsumer implements BenchmarkConsumer {
                     }
 
                     if (!records.isEmpty()) {
+                        long now = System.nanoTime();
+                        log.info("usec since last offset commit: {}", (now - lastOffsetNanos) / 1000);
+                        lastOffsetNanos = now;
                         // Async commit all messages polled so far
                         consumer.commitAsync(offsetMap, null);
                     }
