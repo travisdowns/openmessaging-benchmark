@@ -42,10 +42,10 @@ public class RedpandaBenchmarkProducer implements BenchmarkProducer {
 
     long nextOut;
 
-    private static void print_metric(String name, Map<MetricName, ? extends Metric> map) {
+    private static void printMetric(String name, Map<MetricName, ? extends Metric> map) {
         for (Map.Entry<MetricName, ? extends Metric> e : map.entrySet()) {
             if (e.getKey().name().equals(name)) {
-                System.err.println(name + ": " + e.getValue().metricValue());
+                System.err.print(name + ": " + e.getValue().metricValue() + "  ");
                 return;
             }
         }
@@ -83,10 +83,13 @@ public class RedpandaBenchmarkProducer implements BenchmarkProducer {
             //         System.err.print("        GAUGE\n");
             //     }
             // }
-            print_metric("batch-size-avg", m);
-            print_metric("batch-size-max", m);
+            printMetric("batch-size-avg", m);
+            printMetric("batch-size-max", m);
+            printMetric("record-size-avg", m);
+            printMetric("record-size-max", m);
+            System.err.println();
 
-            nextOut = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            nextOut = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         }
 
         return future;
