@@ -27,12 +27,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.DataFormatException;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 
 import org.HdrHistogram.Histogram;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.asynchttpclient.AsyncHttpClient;
+import org.asynchttpclient.Response;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -320,14 +319,22 @@ public class DistributedWorkersEnsemble implements Worker {
         FutureUtil.waitForAll(hosts.stream().map(w -> sendPost(w, path, body)).collect(toList())).join();
     }
 
+    /**
+     * Vaidate that a 200 response was received and log and throw an exception otherwise.
+     */
+    private static void checkResponse(Response response, String host, String path) {
+        if (response.getStatusCode() != 200) {
+            String messagePrefix = String.format("HTTP post to %s%s failed -- code: %d",
+                host, path, response.getStatusCode());
+            log.error("{} error: {}", messagePrefix, response.getResponseBody());
+            throw new RuntimeException(messagePrefix);
+        }
+    }
+
     private CompletableFuture<Void> sendPost(String host, String path, byte[] body) {
-        return httpClient.preparePost(host + path).setBody(body).execute().toCompletableFuture().thenApply(x -> {
-            if (x.getStatusCode() != 200) {
-                log.error("Failed to do HTTP post request to {}{} -- code: {} error: {}", host, path, x.getStatusCode(),
-                        x.getResponseBody());
-            }
-            Preconditions.checkArgument(x.getStatusCode() == 200, "Status should be 200");
-            return (Void) null;
+        return httpClient.preparePost(host + path).setBody(body).execute().toCompletableFuture().thenApply(response -> {
+            checkResponse(response, host, path);
+            return (Void)null;
         });
     }
 
@@ -348,11 +355,7 @@ public class DistributedWorkersEnsemble implements Worker {
     private <T> CompletableFuture<T> get(String host, String path, Class<T> clazz) {
         return httpClient.prepareGet(host + path).execute().toCompletableFuture().thenApply(response -> {
             try {
-                if (response.getStatusCode() != 200) {
-                    log.error("Failed to do HTTP get request to {}{} -- code: {}", host, path,
-                            response.getStatusCode());
-                }
-                Preconditions.checkArgument(response.getStatusCode() == 200, "Status should be 200");
+                checkResponse(response, host, path);
                 return mapper.readValue(response.getResponseBody(), clazz);
             } catch (IOException e) {
                 throw new RuntimeException(e);
@@ -363,10 +366,7 @@ public class DistributedWorkersEnsemble implements Worker {
     private <T> CompletableFuture<T> post(String host, String path, byte[] body, Class<T> clazz) {
         return httpClient.preparePost(host + path).setBody(body).execute().toCompletableFuture().thenApply(response -> {
             try {
-                if (response.getStatusCode() != 200) {
-                    log.error("Failed to do HTTP post request to {}{} -- code: {}", host, path, response.getStatusCode());
-                }
-                Preconditions.checkArgument(response.getStatusCode() == 200, "Status should be 200");
+                checkResponse(response, host, path);
                 return mapper.readValue(response.getResponseBody(), clazz);
             } catch (IOException e) {
                 throw new RuntimeException(e);
