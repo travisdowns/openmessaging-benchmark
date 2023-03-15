@@ -20,6 +20,7 @@ import java.util.List;
 
 import org.HdrHistogram.Histogram;
 import org.apache.bookkeeper.stats.StatsLogger;
+import org.apache.pulsar.shade.com.google.common.base.Throwables;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,6 +64,13 @@ public class WorkerHandler {
         app.exception(RuntimeException.class, (e, ctx) -> {
             log.error("Request handler: {} - Exception: {}", ctx.path(), e.getMessage());
             log.error("Details", e);
+            String body = String.format("Exception ocurred while handling request for %s: %s\n" +
+            "============== Remote Exception ==============\n%s" +
+            "=========  End of Remote Exception ===========\n",
+            ctx.path(), e.getMessage(), Throwables.getStackTraceAsString(e));
+
+            // log.error("Error: {}", body);
+            ctx.result(body);
             ctx.status(HttpURLConnection.HTTP_INTERNAL_ERROR);
         });
     }
