@@ -217,8 +217,12 @@ public class LocalWorker implements Worker, ConsumerCallback {
 
     @Override
     public void probeProducers() throws IOException {
+        log.info("probeProducers called with {} producers", producers.size());
         producers.forEach(producer -> producer.sendAsync(Optional.of("key"), new byte[24])
-                .thenRun(() -> totalMessagesSent.increment()));
+                .thenRun(() -> {
+                    log.info("Producer probe successful");
+                    totalMessagesSent.increment();
+                }));
     }
 
     private void submitProducersToExecutor(List<BenchmarkProducer> producers, KeyDistributor keyDistributor, List<byte[]> payloads) {
