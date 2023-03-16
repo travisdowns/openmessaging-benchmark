@@ -21,10 +21,14 @@ package io.openmessaging.benchmark.driver.redpanda;
 import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.apache.bookkeeper.stats.StatsLogger;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -33,9 +37,11 @@ import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
@@ -178,6 +184,38 @@ public class RedpandaBenchmarkDriver implements BenchmarkDriver {
         }
     }
 
+    static class RebalanceListener implements ConsumerRebalanceListener {
+
+        final long startNanos = System.nanoTime();
+        final CountDownLatch latch = new CountDownLatch(1);
+        int count = 0;
+
+        @Override
+        public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+            Duration delta = Duration.ofNanos(System.nanoTime() - startNanos);
+            log.info(">>>> Got onPartitionsAssigned (count {}) after {} ms", count, delta.toMillis());
+            count++;
+            latch.countDown();
+        }
+
+        @Override
+        public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+        }
+
+        public void waitOnFirstRebalance() {
+            try {
+                if (latch.await(50, TimeUnit.SECONDS)) {
+                    return;
+                }
+                String msg = "Consumer didn't join group after 50 seconds";
+                log.error(msg);
+                throw new RuntimeException(msg);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
     @Override
     public CompletableFuture<BenchmarkConsumer> createConsumer(String topic, String subscriptionName,
                                                                ConsumerCallback consumerCallback) {
@@ -187,14 +225,18 @@ public class RedpandaBenchmarkDriver implements BenchmarkDriver {
         KafkaConsumer<String, byte[]> kafkaConsumer = new KafkaConsumer<>(properties);
         try {
             // Subscribe
-            kafkaConsumer.subscribe(Arrays.asList(topic));
+            RebalanceListener listener = new RebalanceListener();
+            kafkaConsumer.subscribe(Arrays.asList(topic), listener);
 
             // Start polling
             BenchmarkConsumer benchmarkConsumer = new RedpandaBenchmarkConsumer(kafkaConsumer, consumerProperties, consumerCallback);
 
             // Add to consumer list to close later
             consumers.add(benchmarkConsumer);
-            return CompletableFuture.completedFuture(benchmarkConsumer);
+            return CompletableFuture.supplyAsync(() -> {
+                listener.waitOnFirstRebalance();
+                return benchmarkConsumer;
+            });
         } catch (Throwable t) {
             kafkaConsumer.close();
             CompletableFuture<BenchmarkConsumer> future = new CompletableFuture<>();
