@@ -258,7 +258,7 @@ public class DistributedWorkersEnsemble implements Worker {
                 stats.scheduleLatency.add(Histogram.decodeFromCompressedByteBuffer(
                     ByteBuffer.wrap(is.scheduleLatencyBytes), TimeUnit.SECONDS.toMicros(30)));
             } catch (Exception e) {
-                log.error("Failed to decode schedule latency");
+                log.error("Failed to decode schedule latency {}", e);
                 throw new RuntimeException(e);
             }
 
@@ -266,7 +266,7 @@ public class DistributedWorkersEnsemble implements Worker {
                 stats.publishDelayLatency.add(Histogram.decodeFromCompressedByteBuffer(
                         ByteBuffer.wrap(is.publishDelayLatencyBytes), TimeUnit.SECONDS.toMicros(30)));
             } catch (Exception e) {
-                log.error("Failed to decode publish delay latency: {}",
+                log.error("Failed to decode publish delay latency: {}\nbytes:\n{}", e,
                           ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(is.publishDelayLatencyBytes)));
                 throw new RuntimeException(e);
             }
@@ -275,7 +275,7 @@ public class DistributedWorkersEnsemble implements Worker {
                 stats.publishDelayLatency.add(Histogram.decodeFromCompressedByteBuffer(
                         ByteBuffer.wrap(is.publishDelayLatencyBytes), TimeUnit.SECONDS.toMicros(30)));
             } catch (Exception e) {
-                log.error("Failed to decode publish delay latency: {}",
+                log.error("Failed to decode publish delay latency: {}\nbytes:\n{}", e,
                           ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(is.publishDelayLatencyBytes)));
                 throw new RuntimeException(e);
             }
@@ -284,7 +284,7 @@ public class DistributedWorkersEnsemble implements Worker {
                 stats.endToEndLatency.add(Histogram.decodeFromCompressedByteBuffer(
                         ByteBuffer.wrap(is.endToEndLatencyBytes), TimeUnit.HOURS.toMicros(12)));
             } catch (Exception e) {
-                log.error("Failed to decode end-to-end latency: {}",
+                log.error("Failed to decode end-to-end latency: {}\nbytes:\n{}", e,
                         ByteBufUtil.prettyHexDump(Unpooled.wrappedBuffer(is.endToEndLatencyBytes)));
                 throw new RuntimeException(e);
             }
