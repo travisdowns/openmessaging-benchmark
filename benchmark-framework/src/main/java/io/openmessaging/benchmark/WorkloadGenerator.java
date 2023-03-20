@@ -24,6 +24,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import org.HdrHistogram.Histogram;
 import org.apache.commons.lang.ArrayUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -390,6 +391,40 @@ public class WorkloadGenerator implements AutoCloseable {
         }
     }
 
+    private static String timeUnitAbbreviation(TimeUnit timeUnit) {
+        switch (timeUnit) {
+            case DAYS: return "d";
+            case HOURS:return "h";
+            case SECONDS: return "s";
+            case MICROSECONDS: return "us";
+            case MILLISECONDS: return "ms";
+            case MINUTES: return "m";
+            case NANOSECONDS: return "ns";
+        }
+        throw new RuntimeException("Unknown TimeUnit: " + timeUnit);
+    }
+
+    private static String formatDec(double durationMicros, TimeUnit displayTimeUnit) {
+        return dec.format(microsToTimeUnit(durationMicros, displayTimeUnit));
+    }
+
+    private static String formatPercentile(Histogram histo, double percentile, TimeUnit displayTimeUnit) {
+        return formatDec(histo.getValueAtPercentile(percentile), displayTimeUnit);
+    }
+
+    private static void logLatencies(String what, Histogram latencyHistogram, TimeUnit displayTimeUnit) {
+        log.info(
+                "----- Aggregated {} latency ({}) avg: {} - 50%: {} - 95%: {} - 99%: {} - 99.9%: {} - 99.99%: {} - Max: {}",
+                what, timeUnitAbbreviation(displayTimeUnit),
+                formatDec(latencyHistogram.getMean(), displayTimeUnit),
+                formatPercentile(latencyHistogram, 50, displayTimeUnit),
+                formatPercentile(latencyHistogram, 95, displayTimeUnit),
+                formatPercentile(latencyHistogram, 99, displayTimeUnit),
+                formatPercentile(latencyHistogram, 99.9, displayTimeUnit),
+                formatPercentile(latencyHistogram, 99.99, displayTimeUnit),
+                formatDec(latencyHistogram.getMaxValue(), displayTimeUnit));
+    }
+
     private TestResult printAndCollectStats(long testDurations, TimeUnit unit) throws IOException {
         long startTime = System.nanoTime();
 
@@ -498,22 +533,10 @@ public class WorkloadGenerator implements AutoCloseable {
             if (now >= testEndTime && !needToWaitForBacklogDraining) {
                 CumulativeLatencies agg = worker.getCumulativeLatencies();;
 
-                log.info(
-                        "----- Aggregated Pub Latency (ms) avg: {} - 50%: {} - 95%: {} - 99%: {} - 99.9%: {} - 99.99%: {} - Max: {} | Pub Delay (us)  avg: {} - 50%: {} - 95%: {} - 99%: {} - 99.9%: {} - 99.99%: {} - Max: {}",
-                        dec.format(agg.publishLatency.getMean() / 1000.0),
-                        dec.format(agg.publishLatency.getValueAtPercentile(50) / 1000.0),
-                        dec.format(agg.publishLatency.getValueAtPercentile(95) / 1000.0),
-                        dec.format(agg.publishLatency.getValueAtPercentile(99) / 1000.0),
-                        dec.format(agg.publishLatency.getValueAtPercentile(99.9) / 1000.0),
-                        dec.format(agg.publishLatency.getValueAtPercentile(99.99) / 1000.0),
-                        throughputFormat.format(agg.publishLatency.getMaxValue() / 1000.0),
-                        dec.format(agg.publishDelayLatency.getMean()),
-                        dec.format(agg.publishDelayLatency.getValueAtPercentile(50)),
-                        dec.format(agg.publishDelayLatency.getValueAtPercentile(95)),
-                        dec.format(agg.publishDelayLatency.getValueAtPercentile(99)),
-                        dec.format(agg.publishDelayLatency.getValueAtPercentile(99.9)),
-                        dec.format(agg.publishDelayLatency.getValueAtPercentile(99.99)),
-                        throughputFormat.format(agg.publishDelayLatency.getMaxValue()));
+                logLatencies("E2E", agg.endToEndLatency, TimeUnit.MILLISECONDS);
+                logLatencies("Pub", agg.publishLatency, TimeUnit.MILLISECONDS);
+                logLatencies("Pub Delay", agg.publishDelayLatency, TimeUnit.MICROSECONDS);
+                logLatencies("Send Delay", agg.scheduleLatency, TimeUnit.MILLISECONDS);
 
                 result.aggregatedPublishLatencyAvg = microsToMillis(agg.publishLatency.getMean());
                 result.aggregatedPublishLatency50pct = microsToMillis(agg.publishLatency.getValueAtPercentile(50));
@@ -583,6 +606,17 @@ public class WorkloadGenerator implements AutoCloseable {
 
     private static double microsToMillis(long microTime) {
         return microTime / (1000.0);
+    }
+
+    private static double microsToTimeUnit(double microTime, TimeUnit unit) {
+        switch (unit) {
+            case MILLISECONDS:
+                return microsToMillis(microTime);
+            case MICROSECONDS:
+                return microTime;
+            default:
+                throw new RuntimeException("Unexpected time unit " + unit);
+        }
     }
 
     private static final DecimalFormat rateFormat = new PaddingDecimalFormat("0.000", 7);
