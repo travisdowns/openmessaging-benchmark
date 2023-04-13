@@ -67,7 +67,8 @@ public class DistributedWorkersEnsemble implements Worker {
     private int numberOfUsedProducerWorkers;
 
     public DistributedWorkersEnsemble(List<String> workers, boolean extraConsumerWorkers) {
-        Preconditions.checkArgument(workers.size() > 1);
+        Preconditions.checkArgument(workers.size() > 1,
+            String.format("Require at least 2 workers but only got %s", workers.size()));
 
         this.workers = workers;
 
