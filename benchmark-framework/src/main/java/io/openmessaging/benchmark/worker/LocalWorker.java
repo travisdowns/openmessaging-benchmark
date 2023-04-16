@@ -444,23 +444,31 @@ public class LocalWorker implements Worker, ConsumerCallback {
         try {
             Thread.sleep(100);
 
+            log.info("Stopping {} producers", producers.size());
             for (BenchmarkProducer producer : producers) {
                 producer.close();
             }
             producers.clear();
+            log.info("Producers stopped");
 
+            log.info("Stopping {} consumers", consumers.size());
             for (BenchmarkConsumer consumer : consumers) {
                 consumer.close();
             }
             consumers.clear();
+            log.info("Consumers stopped", producers.size());
 
             if (benchmarkDriver != null) {
+                log.info("Benchmark driver closing", producers.size());
                 benchmarkDriver.close();
+                log.info("Benchmark driver closed", producers.size());
                 benchmarkDriver = null;
             }
         } catch (Exception e) {
+            log.error("Error in stopAll: {}", e);
             throw new RuntimeException(e);
         }
+        log.info("Finished stopAll()", producers.size());
     }
 
     @Override

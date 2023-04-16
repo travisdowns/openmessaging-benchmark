@@ -168,7 +168,12 @@ public class DistributedWorkersEnsemble implements Worker {
 
     @Override
     public void stopAll() {
-        sendPost(workers, "/stop-all", new byte[0]);
+        log.info("Sending stopAll to {} remote workers", workers.size());
+        try {
+            sendPost(workers, "/stop-all", new byte[0]);
+        } finally {
+            log.info("stopAll complete", workers.size());
+        }
     }
 
     @Override
@@ -317,7 +322,8 @@ public class DistributedWorkersEnsemble implements Worker {
      * Send a request to multiple hosts and wait for all responses
      */
     private void sendPost(List<String> hosts, String path, byte[] body) {
-        FutureUtil.waitForAll(hosts.stream().map(w -> sendPost(w, path, body)).collect(toList())).join();
+        CompletableFuture<?> futures[] = hosts.stream().map(w -> sendPost(w, path, body)).toArray(CompletableFuture[]::new);
+        CompletableFuture.allOf(futures).join();
     }
 
     /**
@@ -333,8 +339,13 @@ public class DistributedWorkersEnsemble implements Worker {
     }
 
     private CompletableFuture<Void> sendPost(String host, String path, byte[] body) {
+        log.info("Sending post to {}/{}", host, path);
         return httpClient.preparePost(host + path).setBody(body).execute().toCompletableFuture().thenApply(response -> {
+            log.info("Finished post to {}/{}", host, path);
             checkResponse(response, host, path);
+            return (Void)null;
+        }).exceptionally(e -> {
+            log.info("Exceptional post to {}/{}", host, path);
             return (Void)null;
         });
     }

@@ -148,6 +148,7 @@ public class WorkloadGenerator implements AutoCloseable {
         runCompleted = true;
 
         try {
+            log.info("Stopping worker(s)");
             worker.stopAll();
         } catch (Exception e) {
             log.error("Unable to stop workload - {}", e.toString());

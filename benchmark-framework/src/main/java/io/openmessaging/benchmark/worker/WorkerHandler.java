@@ -132,8 +132,9 @@ public class WorkerHandler {
     }
 
     private void handleStopAll(Context ctx) throws Exception {
-        log.info("Stop All");
+        log.info("handleStopAll start");
         localWorker.stopAll();
+        log.info("handleStopAll end");
     }
 
     /**
