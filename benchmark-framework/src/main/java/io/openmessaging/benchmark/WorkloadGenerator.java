@@ -537,7 +537,7 @@ public class WorkloadGenerator implements AutoCloseable {
                 logLatencies("E2E", agg.endToEndLatency, TimeUnit.MILLISECONDS);
                 logLatencies("Pub", agg.publishLatency, TimeUnit.MILLISECONDS);
                 logLatencies("Pub Delay", agg.publishDelayLatency, TimeUnit.MICROSECONDS);
-                logLatencies("Send Delay", agg.scheduleLatency, TimeUnit.MILLISECONDS);
+                logLatencies("Enqueue", agg.scheduleLatency, TimeUnit.MILLISECONDS);
 
                 result.aggregatedPublishLatencyAvg = microsToMillis(agg.publishLatency.getMean());
                 result.aggregatedPublishLatency50pct = microsToMillis(agg.publishLatency.getValueAtPercentile(50));
