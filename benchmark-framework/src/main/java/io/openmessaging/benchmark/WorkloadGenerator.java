@@ -17,19 +17,27 @@ import io.openmessaging.benchmark.utils.RandomGenerator;
 import java.io.IOException;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.HdrHistogram.Histogram;
 import org.apache.commons.lang.ArrayUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.base.Strings;
+
 import io.netty.util.concurrent.DefaultThreadFactory;
+import io.openmessaging.benchmark.utils.OmbHistogram;
 import io.openmessaging.benchmark.utils.PaddingDecimalFormat;
 import io.openmessaging.benchmark.utils.Timer;
 import io.openmessaging.benchmark.utils.payload.FilePayloadReader;
@@ -44,6 +52,10 @@ import io.openmessaging.benchmark.worker.commands.TopicSubscription;
 import io.openmessaging.benchmark.worker.commands.TopicsInfo;
 
 public class WorkloadGenerator implements AutoCloseable {
+
+    // percentiles shown for metrics displayed every update period while
+    // the test is running
+    static final double DEFAULT_PERIOD_PERCENTILES[] = {50, 99.9};
 
     private final String driverName;
     private final Workload workload;
@@ -413,6 +425,10 @@ public class WorkloadGenerator implements AutoCloseable {
         return formatDec(histo.getValueAtPercentile(percentile), displayTimeUnit);
     }
 
+    private static String formatPercentile(OmbHistogram histo, double percentile) {
+        return formatPercentile(histo.getHistogram(), percentile, histo.getDisplayUnit());
+    }
+
     private static void logLatencies(String what, Histogram latencyHistogram, TimeUnit displayTimeUnit) {
         log.info(
                 "----- Aggregated {} latency ({}) avg: {} - 50%: {} - 95%: {} - 99%: {} - 99.9%: {} - 99.99%: {} - Max: {}",
@@ -424,6 +440,67 @@ public class WorkloadGenerator implements AutoCloseable {
                 formatPercentile(latencyHistogram, 99.9, displayTimeUnit),
                 formatPercentile(latencyHistogram, 99.99, displayTimeUnit),
                 formatDec(latencyHistogram.getMaxValue(), displayTimeUnit));
+    }
+
+    private static String histoString(String name, Histogram histo, TimeUnit unit) {
+        return String.format("%s (%s) avg: %s - 50%%: %s - 99%%: %s - 99.9%%: %s - Max: %s",
+                name, timeUnitAbbreviation(unit),
+                formatDec(histo.getMean(), unit),
+                formatPercentile(histo, 50, unit),
+                formatPercentile(histo, 99, unit),
+                formatPercentile(histo, 99.9, unit),
+                formatDec(histo.getMaxValue(), unit));
+    }
+
+    static final class Header {
+        final String first, second;
+        Header(String first, String second) {
+            this.first = first;
+            this.second = second;
+        }
+    }
+
+    interface Column {
+        public Header getHeader();
+        public String getValue();
+    }
+
+    static class PodColumn implements Column {
+        final Header header;
+        final String value;
+
+        PodColumn(Header header, String value) {
+            this.header = header;
+            this.value = value;
+        }
+
+        PodColumn(String h1, String h2, String value) {
+            this(new Header(h1, h2), value);
+        }
+
+        @Override
+        public Header getHeader() {
+            return header;
+        }
+
+        @Override
+        public String getValue() {
+            return value;
+        }
+    }
+
+    private static void addPercentileColumns(List<Column> columns, OmbHistogram histo, double... percentiles) {
+        final String name = histo.getName();
+        final TimeUnit unit = histo.getDisplayUnit();
+        final Histogram hdrHisto = histo.getHistogram();
+
+        columns.add(new PodColumn(new Header(name, "Avg"), formatDec(hdrHisto.getMean(), unit)));
+        for (double p : percentiles) {
+            Header h = new Header(name, "p" + p);
+            PodColumn c = new PodColumn(h, formatPercentile(histo, p));
+            columns.add(c);
+        }
+        // columns.add(new PodColumn(new Header(name, "Max"), formatDec(hdrHisto.getMaxValue(), unit)));
     }
 
     private TestResult printAndCollectStats(long testDurations, TimeUnit unit) throws IOException {
@@ -444,6 +521,43 @@ public class WorkloadGenerator implements AutoCloseable {
         result.consumersPerTopic = workload.consumerPerSubscription;
         result.sampleRateMillis = workload.sampleRateMillis;
 
+        ArrayList<Integer> columnSizes = new ArrayList<>();
+
+        Consumer<List<String>> printLine = (line) -> {
+            StringBuilder sb = new StringBuilder();
+            int i = 0;
+            for (String f : line) {
+                if (i > 0) {
+                    sb.append(" | ");
+                }
+
+                // f = "'" + f + "'";
+
+                int length = f.length();
+
+                if (columnSizes.size() <= i) {
+                    assert columnSizes.size() == i;
+                    columnSizes.add(length);
+                } else {
+                    int clength = columnSizes.get(i);
+                    if (clength < length) {
+                        // the current field is larger than the existing column size, so
+                        // increase the column size
+                        columnSizes.set(i, length);
+                    } else {
+                        // pad the existing field out to the column size
+                        f = Strings.padStart(f, clength, ' ');
+                    }
+                }
+
+                sb.append(f);
+
+                i++;
+            }
+
+            log.info("{}", sb);
+        };
+
         while (true) {
             try {
                 Thread.sleep(workload.sampleRateMillis);
@@ -457,36 +571,68 @@ public class WorkloadGenerator implements AutoCloseable {
             double elapsed = (now - oldTime) / 1e9;
 
             double publishRate = stats.messagesSent / elapsed;
-            double publishThroughput = stats.bytesSent / elapsed / 1024 / 1024;
 
             double consumeRate = stats.messagesReceived / elapsed;
-            double consumeThroughput = stats.bytesReceived / elapsed / 1024 / 1024;
 
             long currentBacklog = workload.subscriptionsPerTopic * stats.totalMessagesSent
                     - stats.totalMessagesReceived;
 
-            log.info(
-                    "Pub rate {} msg/s / {} MB/s | Cons rate {} msg/s / {} MB/s | Backlog: {} K | Pub Latency (ms) avg: {} - 50%: {} - 99%: {} - 99.9%: {} - Max: {} | Pub Delay Latency (us) avg: {} - 50%: {} - 99%: {} - 99.9%: {} - Max: {}",
-                    rateFormat.format(publishRate), throughputFormat.format(publishThroughput),
-                    rateFormat.format(consumeRate), throughputFormat.format(consumeThroughput),
-                    dec.format(currentBacklog / 1000.0), //
-                    dec.format(microsToMillis(stats.publishLatency.getMean())),
-                    dec.format(microsToMillis(stats.publishLatency.getValueAtPercentile(50))),
-                    dec.format(microsToMillis(stats.publishLatency.getValueAtPercentile(99))),
-                    dec.format(microsToMillis(stats.publishLatency.getValueAtPercentile(99.9))),
-                    throughputFormat.format(microsToMillis(stats.publishLatency.getMaxValue())),
-                    dec.format(stats.publishDelayLatency.getMean()),
-                    dec.format(stats.publishDelayLatency.getValueAtPercentile(50)),
-                    dec.format(stats.publishDelayLatency.getValueAtPercentile(99)),
-                    dec.format(stats.publishDelayLatency.getValueAtPercentile(99.9)),
-                    throughputFormat.format(stats.publishDelayLatency.getMaxValue()));
+            List<Column> columns = new ArrayList<>();
 
-            log.info("E2E Latency (ms) avg: {} - 50%: {} - 99%: {} - 99.9%: {} - Max: {}",
-                    dec.format(microsToMillis(stats.endToEndLatency.getMean())),
-                    dec.format(microsToMillis(stats.endToEndLatency.getValueAtPercentile(50))),
-                    dec.format(microsToMillis(stats.endToEndLatency.getValueAtPercentile(99))),
-                    dec.format(microsToMillis(stats.endToEndLatency.getValueAtPercentile(99.9))),
-                    throughputFormat.format(microsToMillis(stats.endToEndLatency.getMaxValue())));
+            class AddRate {
+                void apply(String name, long messages, long bytes) {
+                    columns.add(new PodColumn(name, "msg/s", rateFormat.format(messages / elapsed)));
+                    columns.add(new PodColumn(name, "MB/s", throughputFormat.format(bytes / (elapsed * 1024 * 1024))));
+                }
+            }
+
+            AddRate ar = new AddRate();
+
+            ar.apply("Publish", stats.messagesSent, stats.bytesSent);
+            ar.apply("Consume", stats.messagesReceived, stats.bytesReceived);
+
+                // new PodColumn("Backlog", "K msgs", dec.format(currentBacklog / 1000.0))
+
+            final OmbHistogram publishLatency = new OmbHistogram("Pub Lat", stats.publishLatency, TimeUnit.MILLISECONDS);
+            final OmbHistogram publishDelay = new OmbHistogram("Pub Delay", stats.publishDelayLatency, TimeUnit.MICROSECONDS);
+
+            addPercentileColumns(columns, publishLatency, DEFAULT_PERIOD_PERCENTILES);
+            addPercentileColumns(columns, publishDelay, DEFAULT_PERIOD_PERCENTILES);
+
+            // display the headers
+            final List<String> h1 = columns.stream().map(Column::getHeader).map(h -> h.first).collect(Collectors.toList());
+            final List<String> h2 = columns.stream().map(Column::getHeader).map(h -> h.second).collect(Collectors.toList());
+            printLine.accept(h1);
+            printLine.accept(h2);
+
+
+            printLine.accept(columns.stream().map(Column::getValue).collect(Collectors.toList()));
+            // dispaly the values
+
+            // log.info(">> {}", sb.toString());
+
+            // log.info(
+            //         "oo Pub rate {} msg/s / {} MB/s | Cons rate {} msg/s / {} MB/s | Backlog: {} K | Pub Latency (ms) avg: {} - 50%: {} - 99%: {} - 99.9%: {} - Max: {} | Pub Delay Latency (us) avg: {} - 50%: {} - 99%: {} - 99.9%: {} - Max: {}",
+            //         rateFormat.format(publishRate), throughputFormat.format(publishThroughput),
+            //         rateFormat.format(consumeRate), throughputFormat.format(consumeThroughput),
+            //         dec.format(currentBacklog / 1000.0), //
+            //         dec.format(microsToMillis(stats.publishLatency.getMean())),
+            //         dec.format(microsToMillis(stats.publishLatency.getValueAtPercentile(50))),
+            //         dec.format(microsToMillis(stats.publishLatency.getValueAtPercentile(99))),
+            //         dec.format(microsToMillis(stats.publishLatency.getValueAtPercentile(99.9))),
+            //         throughputFormat.format(microsToMillis(stats.publishLatency.getMaxValue())),
+            //         dec.format(stats.publishDelayLatency.getMean()),
+            //         dec.format(stats.publishDelayLatency.getValueAtPercentile(50)),
+            //         dec.format(stats.publishDelayLatency.getValueAtPercentile(99)),
+            //         dec.format(stats.publishDelayLatency.getValueAtPercentile(99.9)),
+            //         throughputFormat.format(stats.publishDelayLatency.getMaxValue()));
+
+            // log.info("E2E Latency (ms) avg: {} - 50%: {} - 99%: {} - 99.9%: {} - Max: {}",
+            //         dec.format(microsToMillis(stats.endToEndLatency.getMean())),
+            //         dec.format(microsToMillis(stats.endToEndLatency.getValueAtPercentile(50))),
+            //         dec.format(microsToMillis(stats.endToEndLatency.getValueAtPercentile(99))),
+            //         dec.format(microsToMillis(stats.endToEndLatency.getValueAtPercentile(99.9))),
+            //         throughputFormat.format(microsToMillis(stats.endToEndLatency.getMaxValue())));
 
             result.sent.add(stats.messagesSent);
             result.consumed.add(stats.messagesReceived);
@@ -537,7 +683,7 @@ public class WorkloadGenerator implements AutoCloseable {
                 logLatencies("E2E", agg.endToEndLatency, TimeUnit.MILLISECONDS);
                 logLatencies("Pub", agg.publishLatency, TimeUnit.MILLISECONDS);
                 logLatencies("Pub Delay", agg.publishDelayLatency, TimeUnit.MICROSECONDS);
-                logLatencies("Enqueue", agg.scheduleLatency, TimeUnit.MILLISECONDS);
+                logLatencies("Send Delay", agg.scheduleLatency, TimeUnit.MILLISECONDS);
 
                 result.aggregatedPublishLatencyAvg = microsToMillis(agg.publishLatency.getMean());
                 result.aggregatedPublishLatency50pct = microsToMillis(agg.publishLatency.getValueAtPercentile(50));
@@ -620,9 +766,9 @@ public class WorkloadGenerator implements AutoCloseable {
         }
     }
 
-    private static final DecimalFormat rateFormat = new PaddingDecimalFormat("0.000", 7);
+    private static final DecimalFormat rateFormat = new PaddingDecimalFormat("0.0", 2);
     private static final DecimalFormat throughputFormat = new PaddingDecimalFormat("0.000", 4);
-    private static final DecimalFormat dec = new PaddingDecimalFormat("0.000", 4);
+    private static final DecimalFormat dec = new PaddingDecimalFormat("0.0", 2);
 
     private static final Logger log = LoggerFactory.getLogger(WorkloadGenerator.class);
 }
