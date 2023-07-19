@@ -71,18 +71,17 @@ public class RedpandaBenchmarkConsumer implements BenchmarkConsumer {
 
                         offsetMap.put(new TopicPartition(record.topic(), record.partition()),
                                 new OffsetAndMetadata(record.offset()+1));
-                    }
 
+                    }
 
                     long now = System.nanoTime();
-                    long timeSinceOffsetCommit = now - lastOffsetNanos;
-                    if (!offsetMap.isEmpty() && timeSinceOffsetCommit > TimeUnit.SECONDS.toNanos(5)) {
-                        log.debug("msec since last offset commit: {}", (now - lastOffsetNanos) / 1000 / 1000);
-                        lastOffsetNanos = now;
-                        // Async commit all messages polled so far
-                        consumer.commitAsync(offsetMap, null);
-                        offsetMap.clear();
-                    }
+                    // log.info("map.size() {} msec since last offset commit: {}", offsetMap.size(), (now - lastOffsetNanos) / 1000 / 1000);
+                    lastOffsetNanos = now;
+                    // Async commit all messages polled so far
+                    consumer.commitSync(offsetMap);
+                    offsetMap.clear();
+
+
                 }
                 catch(Exception e){
                     callback.error();
