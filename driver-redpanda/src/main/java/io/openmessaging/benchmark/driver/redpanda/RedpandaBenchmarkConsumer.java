@@ -60,8 +60,6 @@ public class RedpandaBenchmarkConsumer implements BenchmarkConsumer {
         this.executor = Executors.newSingleThreadExecutor();
         this.autoCommit= Boolean.valueOf((String)consumerConfig.getOrDefault(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG,"false"));
         this.consumerTask = this.executor.submit(() -> {
-            long lastOffsetNanos = System.nanoTime();
-            Map<TopicPartition, OffsetAndMetadata> offsetMap = new HashMap<>();
             while (!closing) {
                 try {
                     ConsumerRecords<String, byte[]> records = consumer.poll(Duration.ofMillis(pollTimeoutMs));
@@ -69,17 +67,12 @@ public class RedpandaBenchmarkConsumer implements BenchmarkConsumer {
                     for (ConsumerRecord<String, byte[]> record : records) {
                         callback.messageReceived(record.value(), record.timestamp());
 
+                        Map<TopicPartition, OffsetAndMetadata> offsetMap = new HashMap<>();
                         offsetMap.put(new TopicPartition(record.topic(), record.partition()),
                                 new OffsetAndMetadata(record.offset()+1));
-
+                        consumer.commitSync(offsetMap);
                     }
 
-                    long now = System.nanoTime();
-                    // log.info("map.size() {} msec since last offset commit: {}", offsetMap.size(), (now - lastOffsetNanos) / 1000 / 1000);
-                    lastOffsetNanos = now;
-                    // Async commit all messages polled so far
-                    consumer.commitSync(offsetMap);
-                    offsetMap.clear();
 
 
                 }
