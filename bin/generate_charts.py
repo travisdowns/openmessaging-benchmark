@@ -328,34 +328,26 @@ def generate_charts(files):
         charts[workload] = [create_bar_chart('Throughput (MB/s): higher is better', 'MB/s', drivers,
                                                      pub_rate_avg)]
 
-        # Generate latency quantiles
-        time_series = zip(drivers, stat_lat_quantile, opts)
-        charts[workload].append(create_quantile_chart('Publish Latency Percentiles: lower is better',
+        def append_quantile_chart(name: str, quantiles):
+            time_series = zip(drivers, quantiles, opts)
+            charts[workload].append(create_quantile_chart(f'{name}: lower is better',
                                                               y_label='Latency (ms)',
                                                               time_series=time_series))
 
-        time_series = zip(drivers, stat_e2e_lat_quantile, opts)
-        charts[workload].append(create_quantile_chart('End-to-End Latency Percentiles: lower is better',
-                                      y_label='Latency (ms)',
-                                      time_series=time_series))
+        def append_latency_time_series(name: str, latency_series):
+            time_series = zip(drivers, latency_series)
+            charts[workload].append(create_chart(f'{name}: lower is better',
+                                                              y_title='Latency (ms)',
+                                                              time_series=time_series))
 
-        # Generate p99 latency time-series
-        time_series = zip(drivers, stats_lat_p99)
-        charts[workload].append(create_chart('Publish Latency - 99th Percentile: lower is better',
-                                             y_title='Latency (ms)',
-                                             time_series=time_series))
+        # Generate latency quantiles
+        append_quantile_chart('Publish Latency Percentiles', stat_lat_quantile)
+        append_quantile_chart('End-to-End Latency Percentiles',stat_e2e_lat_quantile)
 
-        # Generate avg E2E latency time-series
-        time_series = zip(drivers, stat_e2e_lat_avg)
-        charts[workload].append(create_chart('End-to-end Latency - Average: lower is better',
-                                             y_title='Latency (ms)',
-                                             time_series=time_series))
-
-        # Generate avg E2E latency time-series
-        time_series = zip(drivers, stat_e2e_lat_p50)
-        charts[workload].append(create_chart('End-to-end Latency - P50: lower is better',
-                                             y_title='Latency (ms)',
-                                             time_series=time_series))
+        # Generate latency time series
+        append_latency_time_series('Publish Latency - 99th Percentile', stats_lat_p99)
+        append_latency_time_series('End-to-end Latency - Average', stat_e2e_lat_avg)
+        append_latency_time_series('End-to-end Latency - P50', stat_e2e_lat_p50)
 
         # Generate publish rate
         time_series = zip(drivers, stats_pub_rate)
