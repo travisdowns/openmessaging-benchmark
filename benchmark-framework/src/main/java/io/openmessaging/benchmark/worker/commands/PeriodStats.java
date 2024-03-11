@@ -13,8 +13,6 @@
  */
 package io.openmessaging.benchmark.worker.commands;
 
-import java.util.concurrent.TimeUnit;
-
 import org.HdrHistogram.Histogram;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -31,6 +29,8 @@ public class PeriodStats {
     public long totalMessagesSent = 0;
     public long totalErrors = 0;
     public long totalMessagesReceived = 0;
+
+    public String fatalError = null;
 
     @JsonIgnore
     public Histogram publishLatency = new Histogram(5);

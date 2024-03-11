@@ -26,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -33,6 +34,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Throwables;
 
 import io.openmessaging.benchmark.utils.UniformRateLimiter;
 import org.HdrHistogram.Recorder;
@@ -60,6 +62,26 @@ import io.openmessaging.benchmark.worker.commands.ProducerWorkAssignment;
 import io.openmessaging.benchmark.worker.commands.TopicsInfo;
 
 public class LocalWorker implements Worker, ConsumerCallback {
+    /**
+     * Configuration parameters relevant to the worker, generally extracted
+     * from the workload config.
+     */
+    public static class WorkerConfig {
+
+        WorkerConfig(StatsLogger statsLogger, boolean allExceptionsFatal) {
+            this.statsLogger = statsLogger;
+            this.allExceptionsFatal = allExceptionsFatal;
+        }
+
+        private final StatsLogger statsLogger;
+
+        // If true, any exception thrown from message production or consumption is
+        // considered fatal, rather than just a specific list of known fatal
+        // exceptions.
+        final boolean allExceptionsFatal;
+
+        static WorkerConfig DEFAULT = new WorkerConfig(NullStatsLogger.INSTANCE, false);
+    };
 
     private BenchmarkDriver benchmarkDriver = null;
 
@@ -70,9 +92,7 @@ public class LocalWorker implements Worker, ConsumerCallback {
 
     private final ExecutorService executor = Executors.newCachedThreadPool(new DefaultThreadFactory("local-worker"));
 
-    // stats
-
-    private final StatsLogger statsLogger;
+    private final WorkerConfig config;
 
     private final LongAdder messagesSent = new LongAdder();
     private final LongAdder errors = new LongAdder();
@@ -106,25 +126,29 @@ public class LocalWorker implements Worker, ConsumerCallback {
     private final Recorder endToEndCumulativeLatencyRecorder = new Recorder(TimeUnit.HOURS.toMicros(12), 5);
     private final OpStatsLogger endToEndLatencyStats;
 
-    private boolean testCompleted = false;
+    private volatile boolean testCompleted = false;
 
-    private boolean consumersArePaused = false;
+    private volatile boolean consumersArePaused = false;
+
+    // if a fatal error has occurred on any thread managed by the worker (e.g., producer loop)
+    // this will be set to the exception that occurred, to be propagated to the caller
+    private AtomicReference<Throwable> fatalError = new AtomicReference<>();
 
     public LocalWorker() {
-        this(NullStatsLogger.INSTANCE);
+        this(WorkerConfig.DEFAULT);
     }
 
-    public LocalWorker(StatsLogger statsLogger) {
-        this.statsLogger = statsLogger;
+    public LocalWorker(WorkerConfig config) {
+        this.config = config;
 
-        StatsLogger producerStatsLogger = statsLogger.scope("producer");
+        StatsLogger producerStatsLogger = config.statsLogger.scope("producer");
         this.messagesSentCounter = producerStatsLogger.getCounter("messages_sent");
         this.bytesSentCounter = producerStatsLogger.getCounter("bytes_sent");
         this.publishDelayLatencyStats = producerStatsLogger.getOpStatsLogger("producer_delay_latency");
         this.publishLatencyStats = producerStatsLogger.getOpStatsLogger("produce_latency");
         this.scheduleLatencyStats = producerStatsLogger.getOpStatsLogger("schedule_latency");
 
-        StatsLogger consumerStatsLogger = statsLogger.scope("consumer");
+        StatsLogger consumerStatsLogger = config.statsLogger.scope("consumer");
         this.messagesReceivedCounter = consumerStatsLogger.getCounter("messages_recv");
         this.bytesReceivedCounter = consumerStatsLogger.getCounter("bytes_recv");
         this.endToEndLatencyStats = consumerStatsLogger.getOpStatsLogger("e2e_latency");
@@ -141,7 +165,7 @@ public class LocalWorker implements Worker, ConsumerCallback {
 
         try {
             benchmarkDriver = (BenchmarkDriver) Class.forName(driverConfiguration.driverClass).newInstance();
-            benchmarkDriver.initialize(driverConfigFile, statsLogger);
+            benchmarkDriver.initialize(driverConfigFile, config.statsLogger);
         } catch (InstantiationException | IllegalAccessException | ClassNotFoundException e) {
             throw new RuntimeException(e);
         }
@@ -221,6 +245,24 @@ public class LocalWorker implements Worker, ConsumerCallback {
                 .thenRun(() -> totalMessagesSent.increment()));
     }
 
+    List<Class<? extends Throwable>> FATAL_THROWABLES = Arrays.asList(Error.class);
+
+    private boolean isFatalError(Throwable ex) {
+        if (this.config.allExceptionsFatal) {
+            return true;
+        }
+
+        // if the exception is in our list of fatal throwables, we don't continue but instead
+        // treat this as a fatal error
+        for (Class<? extends Throwable> t : FATAL_THROWABLES) {
+            if(t.isInstance(ex)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void submitProducersToExecutor(List<BenchmarkProducer> producers, KeyDistributor keyDistributor, List<byte[]> payloads) {
         executor.submit(() -> {
             int payloadCount = payloads.size();
@@ -228,7 +270,7 @@ public class LocalWorker implements Worker, ConsumerCallback {
             byte[] firstPayload = payloads.get(0);
 
             try {
-                while (!testCompleted) {
+                while (!testCompleted && fatalError.get() != null) {
                     producers.forEach(producer -> {
                         byte[] payloadData = payloadCount == 0 ? firstPayload : payloads.get(r.nextInt(payloadCount));
                         final long intendedSendTime = rateLimiter.acquire();
@@ -258,13 +300,19 @@ public class LocalWorker implements Worker, ConsumerCallback {
                         }).exceptionally(ex -> {
                             errors.increment();
                             totalErrors.increment();
-                            log.warn("Write error on message", ex);
+                            if (isFatalError(ex)) {
+                                log.error("Fatal error in producer loop (sendAsync), stopping producers", ex);
+                                fatalError.compareAndSet(null, ex); // first exception wins
+                            } else {
+                                log.warn("Non-fatal error in producer loop (sendAsync)", ex);
+                            }
                             return null;
                         });
                     });
                 }
             } catch (Throwable t) {
-                log.error("Got error", t);
+                log.error("Fatal error in producer loop, stopping producers", t);
+                fatalError.compareAndSet(null, t); // first exception wins
             }
         });
     }
@@ -298,6 +346,9 @@ public class LocalWorker implements Worker, ConsumerCallback {
         stats.scheduleLatency = scheduleLatencyRecorder.getIntervalHistogram();
         stats.publishDelayLatency = publishDelayLatencyRecorder.getIntervalHistogram();
         stats.endToEndLatency = endToEndLatencyRecorder.getIntervalHistogram();
+
+        Throwable fatal = fatalError.get();
+        stats.fatalError = fatal == null ? null : Throwables.getStackTraceAsString(fatal);
         return stats;
     }
 

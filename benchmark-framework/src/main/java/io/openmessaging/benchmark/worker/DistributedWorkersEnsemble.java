@@ -214,6 +214,10 @@ public class DistributedWorkersEnsemble implements Worker {
             stats.totalMessagesReceived += is.totalMessagesReceived;
             stats.totalErrors += is.totalErrors;
 
+            // if any worked failed, make sure to return the fatal error, but if multiple
+            // failed we return one arbitrarily
+            stats.fatalError = is.fatalError == null ? stats.fatalError : is.fatalError;
+
             try {
                 stats.publishLatency.add(Histogram.decodeFromCompressedByteBuffer(
                         ByteBuffer.wrap(is.publishLatencyBytes), TimeUnit.SECONDS.toMicros(30)));

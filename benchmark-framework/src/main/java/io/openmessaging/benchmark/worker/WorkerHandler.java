@@ -32,6 +32,7 @@ import com.google.common.io.Files;
 import io.javalin.Context;
 import io.javalin.Javalin;
 import io.openmessaging.benchmark.WorkloadGenerator;
+import io.openmessaging.benchmark.worker.LocalWorker.WorkerConfig;
 import io.openmessaging.benchmark.worker.commands.ConsumerAssignment;
 import io.openmessaging.benchmark.worker.commands.CumulativeLatencies;
 import io.openmessaging.benchmark.worker.commands.PeriodStats;
@@ -45,7 +46,7 @@ public class WorkerHandler {
     volatile long lastPeriodStatsTime = -1;
 
     public WorkerHandler(Javalin app, StatsLogger statsLogger) {
-        this.localWorker = new LocalWorker(statsLogger);
+        this.localWorker = new LocalWorker(new WorkerConfig(statsLogger, false));
 
         app.post("/initialize-driver", this::handleInitializeDriver);
         app.post("/create-topics", this::handleCreateTopics);

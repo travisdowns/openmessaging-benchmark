@@ -447,6 +447,19 @@ public class WorkloadGenerator implements AutoCloseable {
 
             PeriodStats stats = worker.getPeriodStats();
 
+            if (stats.fatalError != null) {
+                // all fatal error occurred on the worker, throw in order to terminate
+                // the benchmark
+
+                String message = String.format("A fatal error occurred on the worker. " +
+                    "Worker stack below.\nvvvvvv worker stack start vvvvvv\n%s\n^^^^^^ worker stack end ^^^^^^",
+                    stats.fatalError);
+
+                log.error(message);
+
+                throw new RuntimeException(message);
+            }
+
             long now = System.nanoTime();
             double elapsed = (now - oldTime) / 1e9;
 
