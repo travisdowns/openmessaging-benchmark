@@ -220,7 +220,7 @@ public class LocalWorker implements Worker, ConsumerCallback {
     @Override
     public void probeProducers() throws IOException {
         // Asynchronously have our local Producers produce a single message to force connectivity.
-        log.info("beginning probe of {} producers", producers.size());
+        log.info("Beginning probe of {} producers", producers.size());
         int cnt = producers
             .parallelStream()
             .map(p -> p.sendAsync(Optional.empty(), new byte[24]))
