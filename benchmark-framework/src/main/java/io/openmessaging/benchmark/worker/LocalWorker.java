@@ -228,6 +228,7 @@ public class LocalWorker implements Worker, ConsumerCallback {
                 try {
                     f.get(1, TimeUnit.MINUTES); // if we take longer than 1m to probe, something is wrong!
                     totalMessagesSent.increment();
+                    log.info("Probe complete on this producer, totalMessagesSent: {}", totalMessagesSent.sum());
                 } catch (Exception e) {
                     log.error("error probing producer", e);
                     Throwables.throwIfUnchecked(e);

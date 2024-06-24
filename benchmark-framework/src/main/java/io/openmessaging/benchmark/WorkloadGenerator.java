@@ -169,8 +169,9 @@ public class WorkloadGenerator implements AutoCloseable {
 
         long start = System.currentTimeMillis();
         long end = start + 60 * 1000;
-        while (System.currentTimeMillis() < end) {
-            CountersStats stats = worker.getCountersStats();
+        CountersStats stats;
+        do {
+            stats = worker.getCountersStats();
             if (stats.messagesReceived < expectedMessages) {
                 try {
                     Thread.sleep(100);
@@ -180,10 +181,11 @@ public class WorkloadGenerator implements AutoCloseable {
             } else {
                 break;
             }
-        }
+        } while (System.currentTimeMillis() < end);
 
         if (System.currentTimeMillis() >= end) {
-            log.warn("Timed out waiting for consumers to be ready");
+            log.warn("Timed out waiting for consumers to be ready, sent/read/expected: {}/{}/{}",
+                stats.messagesSent, stats.messagesReceived, expectedMessages);
         } else {
             log.info("All consumers are ready");
         }
