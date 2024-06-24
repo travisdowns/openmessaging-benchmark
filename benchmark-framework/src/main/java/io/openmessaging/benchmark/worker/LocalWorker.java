@@ -335,6 +335,7 @@ public class LocalWorker implements Worker, ConsumerCallback {
         CountersStats stats = new CountersStats();
         stats.messagesSent = totalMessagesSent.sum();
         stats.messagesReceived = totalMessagesReceived.sum();
+        log.info("getCountersStats send/recv {}/{}", stats.messagesSent, stats.messagesReceived);
         return stats;
     }
 
@@ -354,6 +355,7 @@ public class LocalWorker implements Worker, ConsumerCallback {
     }
 
     public void internalMessageReceived(int size, long publishTimestampMillis) {
+        log.info("MESSAGE RECV");
         messagesReceived.increment();
         totalMessagesReceived.increment();
         messagesReceivedCounter.inc();
