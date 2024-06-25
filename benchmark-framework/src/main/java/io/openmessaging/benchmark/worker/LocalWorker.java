@@ -355,7 +355,7 @@ public class LocalWorker implements Worker, ConsumerCallback {
     }
 
     public void internalMessageReceived(int size, long publishTimestampMillis) {
-        log.info("MESSAGE RECV");
+        // log.info("MESSAGE RECV");
         messagesReceived.increment();
         totalMessagesReceived.increment();
         messagesReceivedCounter.inc();

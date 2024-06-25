@@ -59,7 +59,9 @@ public class RedpandaBenchmarkConsumer implements BenchmarkConsumer {
             Map<TopicPartition, OffsetAndMetadata> offsetMap = new HashMap<>();
             while (!closing) {
                 try {
+                    log.info("Before poll");
                     ConsumerRecords<String, byte[]> records = consumer.poll(Duration.ofMillis(pollTimeoutMs));
+                    log.info("Poll got {} records", records.count());
 
                     for (ConsumerRecord<String, byte[]> record : records) {
                         callback.messageReceived(record.value(), record.timestamp());
